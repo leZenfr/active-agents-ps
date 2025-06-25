@@ -1,0 +1,23 @@
+{
+  "LanguageDC": "FR",
+  "ScriptPathSource": ".\\Scripts",
+  "ScriptPathDestination": "C:\\Scripts\\SuperVisionAD",
+  "GDLGroupOU": "CN=Users,DC=cat,DC=love",
+  "GDLSVCGroupName": "GDL_SVC_DC-TASK",
+  "GDLSMBGroupName": "GDL_SVAD_SMB-WO",
+  "AccountsOU": "CN=Users,DC=cat,DC=love",
+  "Accounts": [
+    {
+      "Utile": "Log", 
+      "Username": "SVC_SVAD-Log",
+      "TaskName": "SupervisionAD-Log",
+      "ScriptName": "\\GatherLog.ps1"
+    },
+    {
+      "Utile": "Param",
+      "Username": "SVC_SVAD-Param",
+      "TaskName": "SupervisionAD-Parameters",
+      "ScriptName": "\\GatherParam.ps1"
+    }
+  ]
+}
