@@ -17,104 +17,103 @@
 ####~~-------------------------
 #region  PARAMETRAGES
 ####~~-------------------------
-
-$FRGroupsName = @("Lecteurs des journaux d’événements","Admins du domaine")
-$ENGroupsName = @("Lecteurs des journaux d’événements","Admins du domaine") # TODO : récupérer les noms anglais
-
 Set-Location -Path $PSScriptRoot
+
 $configPath = ".\config.json"
 if (-not (Test-Path $configPath)) {
     Write-Error "[!]Fichier de configuration introuvable : $configPath"
     exit 1
 }
-$config = Get-Content $configPath | ConvertFrom-Json
+$config = Get-Content $configPath | ConvertFrom-Json  # Import du fichier config et récupération des paramètres.
 
-$languageDC            = $config.LanguageDC
+$languageDC            = $config.LanguageDC             # Langage du DC 
+$groupsName            = $config.GroupsName             # Les noms de groups différents selon le langage du DC ou custom
 
-$scriptPathSource      = $config.ScriptPathSource
-$scriptPathDestination = $config.ScriptPathDestination
+$scriptPathSource      = $config.ScriptPathSource       # Répertoire contenant les scripts utilisés par les tâches à déplacer
+$scriptPathDestination = $config.ScriptPathDestination  # Répertoire cible où seront placés les script utilisées par les tâches
 
-$GDLGroupOU            = $config.GDLGroupOU
-$GDLSVCGroupName       = $config.GDLSVCGroupName
-$GDLSMBGroupName       = $config.GDLSMBGroupName
+$GDLGroupOU            = $config.GDLGroupOU             # OU où seront placés les groupes créé pour les comptes de services.
+$GDLGroupsName         = $config.GDLGroupsName          # Nom des groupes à créer pour les gMSA
 
-$accountsOU            = $config.AccountsOU
-$accounts              = $config.Accounts
+$accountsOU            = $config.AccountsOU             # OU où seront placés les comptes de services
+$accounts              = $config.Accounts               # Regroupement de paramètres nécessaires pour la création des deux comptes de services
 
-$serverName            = $env:COMPUTERNAME
-$DNSRootName           = (Get-ADDOmain).DNSRoot
+$serverName            = $env:COMPUTERNAME              # Utilisé pour la création des gMSA
+$DNSRootName           = (Get-ADDOmain).DNSRoot         # Utilisé pour la création des gMSA
 
+$permGroupsName = $groupsName.$languageDC               # Récupère les bons SAM de groupes pour les comptes
 #endregion  PARAMETRAGES ------
 ####~~-------------------------
-
 
 
 
 ####~~-------------------------
 #region FONCTIONS
 ####~~-------------------------
+function Create-Group {
+    param (
+        [string]$GroupName,
+        [string]$GroupOU
+    )
+    
+    try { $testGroupSMBExist = Get-ADGroup -Identity $GroupName -ErrorAction SilentlyContinue } catch{} 
+    if ($testGroupSMBExist) { Write-Host "[!] Le groupe ($GroupName) existe déjà." -ForegroundColor Red; return } 
+        
+    New-ADGroup `
+        -Name $GroupName `
+        -SamAccountName $GroupName `
+        -GroupScope DomainLocal `
+        -GroupCategory Security `
+        -Path $GroupOU
+    Write-Host "[+] Groupe ($GroupName) créé." -ForegroundColor Green
 
-Function New-LurchPassphrase {
-    $wordDatabase = "Bad;Feeling;Plan;Grrr;Coach;Play;Give;Chance;Handle;The;Rock;Dog;Crap;Hate;Spider;Down;42;Handball;Squash;Pumpkin;Bat;Skull;Black;Adams;Family;Telephone;Trainer;Close;Please;Shrink;Clique;Quiet;Belt;Clue;Alive;Academy;Litigation;Dedicate;Bush;Air;Compete;Grandfather;Sausage;Copyright;Middle;Enfix;Comprehensive;Acute;Aviation;Plagiarize;Write;Strong;Preach;Pan;Peasant;Scan;Quiet;Bird;Track;So;Output;Deserve;Enter;Tail;Give;Represent;Topple;Print;Pardon;Bar;Restrain;Disk;Prey;Create"
-    $LurchWordsList = [array]($wordDatabase -split ';')
-    $LurchKnownWord = $LurchWordsList.Count
-    $passphraseBomb = @('-','+','=','_',' ')
+}
 
-    $words = 0
-    $passphrase = ""
-    While ($words -lt 4) {
-        $Random = Get-Random -Minimum 0 -Maximum ($LurchKnownWord -1)
-        $newWord = $LurchWordsList[$Random]
-        if ($passphrase -ne "") {
-            $random = Get-Random -Minimum 0 -Maximum 4
-            $newWord = "$($passphraseBomb[$random])$newWord"
-        }
-        $passphrase += $newWord
-        $words++
-    }
-
-    return $passphrase
-} # New-LurchPassphrase---
-
-function Create-ADAccount {
+function Create-ADgMSA {
     param (
         [string]$userName,
-        [string]$password,
-        [string]$OU
+        [string]$serverName,
+        [String]$DNSRootName,
+        [string]$utile
     )
-    $securePwd = ConvertTo-SecureString $password -AsPlainText -Force
-    New-ADUser `
-        -Name $userName `
-        -SamAccountName $userName `
-        -AccountPassword $securePwd `
-        -Path $OU `
-        -Enabled $true
+    
+    try { $testgMSAExist = Get-ADServiceAccount -Identity $userName -ErrorAction SilentlyContinue } catch{} 
+    if ($testgMSAExist) { Write-Host "[!] Le gMSA ($userName) existe déjà." -ForegroundColor Red; return }
 
-    Write-Host "[+] Utilisateur ($userName) créé. Veuillez prendre note du mot de passe : $password" -ForegroundColor Green
-    sleep 5
-} # Create-ADAccount---
+    New-ADServiceAccount `
+        -Name $userName `
+        -Description "gMSA pour $serverName - SuperVisionAD $utile" `
+        -DNSHostName "$userName.$DNSRootName" `
+        -ManagedPasswordIntervalInDays 30 `
+        -KerberosEncryptionType AES256 `
+        -PrincipalsAllowedToRetrieveManagedPassword "$serverName$" `
+        -Enabled $True
+
+    Add-ADComputerServiceAccount -Identity $serverName -ServiceAccount $userName
+    Install-ADServiceAccount $userName
+    Write-Host "[+] gMSA ($userName) créé pour le serveur ($serverName)" -ForegroundColor Green
+} # Create-ADgMSA---
 
 function Add-InGroup {
     param(
         [string]$userName,
         [string]$utile,
-        [string]$GDLSVCGroupName,
-        [string]$GDLSMBGroupName,
+        [Array]$GDLGroupsName,
         [Array]$permGroupsName
     )
 
-    Add-ADGroupMember -Identity $GDLSVCGroupName -Members $userName
-    Write-Host "    [+] Ajouté dans le groupe ($GDLSVCGroupName)" -ForegroundColor Green
-    Add-ADGroupMember -Identity $GDLSMBGroupName -Members $userName
-    Write-Host "    [+] Ajouté dans le groupe ($GDLSMBGroupName)" -ForegroundColor Green
+    foreach ($group in $GDLGroupsName) {
+        Add-ADGroupMember -Identity $group -Members $userName
+        Write-Host "    [+] Ajouté dans le groupe ($group)" -ForegroundColor Green
+    }
 
     if ($utile -eq "Log") {
         Add-ADGroupMember -Identity $permGroupsName[0] -Members $userName
         Write-Host "    [+] Ajouté dans le groupe ($($permGroupsName[0]))" -ForegroundColor Green
     }
-    else {
+    elseif ($utile -eq "Param") {
         Add-ADGroupMember -Identity $permGroupsName[1] -Members $userName
-        Write-Host "    [+] Ajouté dans les groupes ($GDLSVCGroupName) et ($($permGroupsName[1]))" -ForegroundColor Green
+        Write-Host "    [+] Ajouté dans les groupes ($($permGroupsName[1]))" -ForegroundColor Green
     }
 } # Add-InGroup---
 
@@ -123,101 +122,94 @@ function Create-Task {
         [string]$taskName,
         [string]$scriptPath,
         [string]$username,
-        [string]$password,
+        [string]$password
     )
+
+    try { $testTaskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch{} 
+    if ($testTaskExists) { Unregister-ScheduledTask -TaskName $taskName -TaskPath "\ActiveVision\" -Confirm:$false }
 
     $userFQDN = "$env:USERDOMAIN\$username"
     $taskAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-File $scriptPath"
     $taskTrigger = New-ScheduledTaskTrigger -Daily -At "3pm"
     
-    Register-ScheduledTask -TaskName $taskName -Action $taskAction -Trigger $taskTrigger -User $userFQDN -Password $password
+    $principal = New-ScheduledTaskPrincipal -UserId $userFQDN -LogonType Password -RunLevel Highest
+    Register-ScheduledTask `
+        -TaskName $taskName `
+        -Action $taskAction `
+        -TaskPath "\ActiveVision\" `
+        -Trigger $taskTrigger `
+        -Principal $principal
 
     Write-Host "[+] Tâche planifiée ($taskName) créée pour $username." -ForegroundColor Green
 } # Create-Task---
-
 #endregion FONCTIONS ----------
 ####~~-------------------------
-
-
 
 
 
 ####~~-------------------------
 #region MAIN 
 ####~~-------------------------
-if ($languageDC -notin @("FR","EN")) {
-    Write-Host "[!] languageDC n'est pas configuré sur ""FR"" ou ""EN"". Actuel = ($languageDC)" -ForegroundColor Red
-    Exit 1
-}
 
+## Check params
 foreach ($account in $accounts) {
     if ($account.Utile -notin @("Log","Param")) {
         Write-Host "[!] Le champ Utile n'est pas configuré sur ""Log"" ou ""Param"" pour l'utilisateur $($account.Username). Actuel = ($($account.Utile))" -ForegroundColor Red
         Exit 3
     }
-}
+} 
 
 #----------
 
-if ($languageDC -eq "FR" ) {
-    $permGroupsName = $FRGroupsName
-} else {
-    $permGroupsName = $ENGroupsName
-}
 
-if (!(Test-Path $scriptPathDestination)) { 
+
+## Traitement des scripts à copier
+if (!(Test-Path $scriptPathDestination)) { # Création du répertoire de destination des scripts s'il n'existe pas
     New-Item -Path $scriptPathDestination -ItemType Directory -Force | Out-Null 
     Write-Host "[+] Répertoire ($scriptPathDestination) créé." -ForegroundColor Green
 }
 Copy-Item -Path "$scriptPathSource\*" -Destination "$scriptPathDestination" -Recurse -Force
 Write-Host "[+] Copie des scripts dans ($scriptPathDestination) OK." -ForegroundColor Green
 
-
-try { $testGroupExist = Get-ADGroup -Identity $GDLSVCGroupName -ErrorAction SilentlyContinue } catch{}
-if ($testGroupExist) {
-    Write-Host "[!] Le groupe ($GDLSVCGroupName) existe déjà." -ForegroundColor Red
-} else {
-    New-ADGroup `
-        -Name $GDLSVCGroupName `
-        -SamAccountName $GDLSVCGroupName `
-        -GroupScope DomainLocal `
-        -GroupCategory Security `
-        -Path $GDLGroupOU `
-        -Description "Groupe regroupant les objets autorisés à ouvrir une session en tant que tâche"
-    Write-Host "[+] Groupe ($GDLSVCGroupName) créé." -ForegroundColor Green
+## Création des groupes 
+foreach ($group in $GDLGroupsName) {
+    Create-Group `
+        -GroupName $group `
+        -GroupOU $GDLGroupOU
 }
 
+## Création et paramétrage des gMSA
 foreach ($account in $accounts) {
+    $userName   = $account.Username
+    $scriptPath = "$scriptPathDestination$($account.ScriptName)"
+    $taskName   = $account.TaskName
+    $utile      = $account.Utile
 
-    $userName = $account.Username
-    $password = New-LurchPassphrase
-
-    try { $testAccountExist = Get-ADUser -Identity $username -ErrorAction SilentlyContinue } catch{}
-    if ($testAccountExist) { # Si compte existe déjà
-        Set-ADAccountPassword -Identity $userName -Reset -NewPassword (ConvertTo-SecureString $password -AsPlainText -Force)
-        Write-Host "[!] Utilisateur ($userName) déjà existant. Création d'un nouveau mot de passe, veuillez en prendre note : $password" -ForegroundColor Red
-    } 
-    else {
-        Create-ADAccount `
-            -username $userName `
-            -password $password `
-            -OU $accountsOU
+    ### Création KdsRootKey si nécessaire avec activation immédiate
+    if (!(Get-KdsRootKey)) { 
+        Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))
+        Write-Host "[+] Clef KDS généré." -ForegroundColor Green
     }
 
+    ### Création des gMSA
+    Create-ADgMSA `
+        -userName $username `
+        -serverName $serverName `
+        -DNSRootName $DNSRootName `
+        -utile $utile 
+
+    $userName = "$($userName)$"
+
+    ### Ajout des gMSA dans les groupes
     Add-InGroup `
         -userName $userName `
-        -utile $account.Utile `
-        -GDLSVCGroupName $GDLSVCGroupName `
-        -GDLSMBGroupName $GDLSMBGroupName `
+        -utile $utile `
+        -GDLGroupsName $GDLGroupsName `
         -permGroupsName $permGroupsName
 
-
-    $scriptPath = "$scriptPathDestination$($account.ScriptName)"
-
-    # TODO : tester si la task existe déjà (recréation ou changement du mot de passe du compte si possible)
+    ### Création des tasks
     Create-Task `
-        -taskName $account.TaskName `
+        -taskName $taskName `
         -scriptPath $scriptPath `
-        -username $Username `
-        -password $password
+        -username $Username
 }
