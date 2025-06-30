@@ -20,7 +20,7 @@
 Set-Location -Path $PSScriptRoot
 $HostNameSRV = "srv-ActiveV"       # Nom du serveur de supervision ActiveVision
 $logFile     = ".\logs-Param.txt"  # Emplacement du fichier de log
-$SleepTime   = 7200                # Intervalle entre les exécutions
+$SleepTime   = 600                 # Intervalle entre les exécutions
 $OUList = @(                       # Liste des OU à superviser (Utilisateur, Groupes, Ordinateurs)
     "CN=Users,DC=cat,DC=love", 
     "CN=Computers,DC=cat,DC=love" 
@@ -30,44 +30,19 @@ $OutputPath  = "\\$hostNameSRV\partage\objects" # Path SMB sur le serveur de sup
 $saveFile    = ".\ObjectsSave.json"             # Fichier contenant la totalité des objets, sert à détecter les différences entre les traitements
 
 $userProperties = @(        # Liste des paramètres récupérés sur les objets utilisateur
-    "objectClass",
-    "objectSid", 
-    "badPasswordTime", 
-    "lastlogon", 
-    "lockoutTime",
-    "DisplayName", 
-    "userPrincipalName", 
-    "sAMAccountName", 
-    "title",
-    "l", 
-    "postalCode", 
-    "streetAddress", 
-    "company", 
-    "manager",
-    "distinguishedName", 
-    "accountExpires", 
-    "whenChanged", 
-    "whenCreated",
-    "pwdLastSet",
-    "userAccountControl"
+    "objectClass", "objectSid", "badPasswordTime", "lastlogon", "lockoutTime",
+    "DisplayName", "userPrincipalName", "sAMAccountName", "title","l", 
+    "postalCode", "streetAddress", "company", "manager","distinguishedName", 
+    "accountExpires", "whenChanged", "whenCreated", "pwdLastSet", "userAccountControl"
 )
 
 $computerProperties = @(    # Liste des paramètres récupérés sur les objets ordinateur
-    "objectClass",
-    'objectSid',
-    'logonCount',
-    'operatingSystem',
-    'distinguishedName',
-    'whenChanged',
-    'whenCreated'
+    "objectClass", 'objectSid', 'logonCount', 'operatingSystem', 'distinguishedName',
+    'whenChanged', 'whenCreated'
 )
 
 $groupProperties = @(       # Liste des paramètres récupérés sur les objets groupe
-    "objectClass",
-    'objectSid',
-    'member',
-    'distinguishedName',
-    'whenChanged',
+    "objectClass", 'objectSid', 'member', 'distinguishedName', 'whenChanged',
     'whenCreated'
 )
 #endregion  PARAMETRAGES ------
@@ -78,7 +53,8 @@ $groupProperties = @(       # Liste des paramètres récupérés sur les objets 
 ####~~-------------------------
 #region MAIN 
 ####~~-------------------------
-New-SmbMapping -RemotePath $outputPath # Connexion au partage SMB
+try{ New-SmbMapping -RemotePath $outputPath -ErrorAction SilentlyContinue } # Connexion au partage SMB
+catch { "[!] Erreur lors de la tentative de connexion au partage SMB ($outputPath), arrêt du script" >> $logFile; exit 1 }
 
 $serverName     = $env:COMPUTERNAME
 $dateLog = Get-Date -Format "dddd dd MMMM yyyy à HH:mm"
@@ -92,9 +68,15 @@ while ($true) {
     }
 
     foreach ($OU in $OUList) { # Récupération de tous les objets dans les OU
-        $allObjects.users     += Get-ADObject -Filter { objectClass -eq 'user' -and objectClass -ne 'computer' } -SearchBase $OU -Properties $userProperties     | Select-Object -Property $userProperties
-        $allObjects.computers += Get-ADObject -Filter { objectClass -eq 'computer' }                             -SearchBase $OU -Properties $computerProperties | Select-Object -Property $computerProperties
-        $allObjects.groups    += Get-ADObject -Filter { objectClass -eq 'group' }                                -SearchBase $OU -Properties $groupProperties    | Select-Object -Property $groupProperties
+        $allObjects.users     += Get-ADObject -Filter { objectClass -eq 'user' -and objectClass -ne 'computer' } `
+            -SearchBase $OU -Properties $userProperties | 
+                Select-Object -Property $userProperties
+        $allObjects.computers += Get-ADObject -Filter { objectClass -eq 'computer' } `
+            -SearchBase $OU -Properties $computerProperties | 
+                Select-Object -Property $computerProperties
+        $allObjects.groups    += Get-ADObject -Filter { objectClass -eq 'group' } `
+            -SearchBase $OU -Properties $groupProperties | 
+                Select-Object -Property $groupProperties
     }
 
     $currentSidDict = @{}
@@ -126,17 +108,20 @@ while ($true) {
         }
 
         if($diffs.Count -gt 0) { 
-            $diffs | ConvertTo-Json | Out-File $differenceFile -Encoding UTF8 # Export des différences
+            $diffs | ConvertTo-Json | Out-File $differenceFile -Encoding UTF8 # Export des différences en json de tous les objets trouvés lors de cette exécution
             "[+] OutFile difference réduite à l'emplacement $differenceFile" >> $logFile
+
+            $currentSidDict | ConvertTo-Json | Out-File $saveFile -Encoding UTF8  # Export en json de tous les objets trouvés lors de cette exécution
+            "[+] OutFile sauvegarde à l'emplacement $saveFile" >> $logFile
         } else { "[INFO] Pas de différence trouvé durant ce scan" >> $logFile }
 
     } else { # Si première execution, export de toutes les données en tant que différence
-        $currentSidDict | ConvertTo-Json | Out-File $differenceFile -Encoding UTF8 
+        $currentSidDict | ConvertTo-Json | Out-File $differenceFile -Encoding UTF8 # Export en json de tous les objets trouvés lors de cette exécution
         "[+] OutFile difference complete à l'emplacement $differenceFile" >> $logFile
-    } 
 
-    $currentSidDict | ConvertTo-Json | Out-File $saveFile -Encoding UTF8  # Export en json de tous les objets trouvés lors de cette exécution
-    "[+] OutFile sauvegarde à l'emplacement $saveFile" >> $logFile
+        $currentSidDict | ConvertTo-Json | Out-File $saveFile -Encoding UTF8  # Export en json de tous les objets trouvés lors de cette exécution
+        "[+] OutFile sauvegarde à l'emplacement $saveFile" >> $logFile
+    } 
 
     Start-Sleep -Seconds $SleepTime 
 }

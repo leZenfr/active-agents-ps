@@ -24,7 +24,7 @@ $SleepTime   = 120                 # Intervalle entre les exécutions
 
 
 $OutputPath  = "\\$hostNameSRV\partage\events"  # Path SMB sur le serveur de supervision ActiveVision
-$lastIDFile  = ".\lastID.txt"                    # Fichier contenant le dernier Record ID 
+$lastIDFile  = ".\lastID.txt"                   # Fichier contenant le dernier Record ID 
 $eventID = @(
     4720, 4722, 4725, 4726, 4738, 4740, 4781, # Audit User Account Management
     4731, 4732, 4733, 4734, 4735, 4727, 4737, 4728, 4729, 4730, 4754, 4755, 4756, 4757, 4758, 4764, # Audit Security Group Management
@@ -33,6 +33,12 @@ $eventID = @(
 
 $actualLastID = 0                # Var servant à détecter un RecordID plus petit que normal (retour à 1) 
 $recordIDHasBeenReset = $False   # Si RecordID reset à 1 = $True
+
+# Récupération du nom de l'AD, son SID et son IP
+$serverName = $env:COMPUTERNAME
+$serverSID  = (Get-ADComputer ($serverName+'$') -Properties objectSID).objectSID.Value
+$serverIP   = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '169.*' -and $_.IPAddress -ne '127.0.0.1' } | Select-Object -ExpandProperty IPAddress
+
 #endregion  PARAMETRAGES ------
 ####~~-------------------------
 
@@ -41,13 +47,8 @@ $recordIDHasBeenReset = $False   # Si RecordID reset à 1 = $True
 ####~~-------------------------
 #region MAIN 
 ####~~-------------------------
-
-# Récupération du nom de l'AD, son SID et son IP
-$serverName = $env:COMPUTERNAME
-$serverSID  = (Get-ADComputer ($serverName+'$') -Properties objectSID).objectSID.Value
-$serverIP   = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '169.*' -and $_.IPAddress -ne '127.0.0.1' } | Select-Object -ExpandProperty IPAddress
-
-New-SmbMapping -RemotePath $outputPath # Connexion au partage SMB
+try{ New-SmbMapping -RemotePath $outputPath -ErrorAction SilentlyContinue } # Connexion au partage SMB
+catch { "[!] Erreur lors de la tentative de connexion au partage SMB ($outputPath), arrêt du script" >> $logFile; exit 1 }
 
 $dateLog = Get-Date -Format "dddd dd MMMM yyyy à HH:mm"
 "[INFO] $dateLog | Démarrage surveillance sur $ServerName | (ID: $($EventID -join ', '))" >> $logFile

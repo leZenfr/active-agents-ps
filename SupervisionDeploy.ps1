@@ -7,7 +7,7 @@
 
     .Notes
     Author: yann.lucas@giboire.com
-      Date: 04/06/2025
+      Date: 18/06/2025
       Ver.: 01.00
           
     History : 
@@ -24,7 +24,7 @@ if (-not (Test-Path $configPath)) {
     Write-Error "[!]Fichier de configuration introuvable : $configPath"
     exit 1
 }
-$config = Get-Content $configPath | ConvertFrom-Json  # Import du fichier config et récupération des paramètres.
+$config = Get-Content $configPath | ConvertFrom-Json    # Import du fichier config et récupération des paramètres.
 
 $languageDC            = $config.LanguageDC             # Langage du DC 
 $groupsName            = $config.GroupsName             # Les noms de groups différents selon le langage du DC ou custom
@@ -35,7 +35,6 @@ $scriptPathDestination = $config.ScriptPathDestination  # Répertoire cible où 
 $GDLGroupOU            = $config.GDLGroupOU             # OU où seront placés les groupes créé pour les comptes de services.
 $GDLGroupsName         = $config.GDLGroupsName          # Nom des groupes à créer pour les gMSA
 
-$accountsOU            = $config.AccountsOU             # OU où seront placés les comptes de services
 $accounts              = $config.Accounts               # Regroupement de paramètres nécessaires pour la création des deux comptes de services
 
 $serverName            = $env:COMPUTERNAME              # Utilisé pour la création des gMSA
